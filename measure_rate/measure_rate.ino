@@ -1,4 +1,4 @@
-#include <Arduino_LSM9DS1.h>
+#include "Arduino_LSM9DS1.h"
 #include <MadgwickAHRS.h>
 
 Madgwick filter;
@@ -34,42 +34,12 @@ void setup() {
   // IMU.setContinuousMode();
 }
 
+unsigned long i = 0;
 void loop() {
   float gx, gy, gz, ax, ay, az;
-  unsigned long starttime = micros();
-  for (int i=0; i<100; i++){
-
-    //IMU.readIMU(ax,ay,az,gx,gy,gz);
-    IMU.readAcceleration(ax, ay, az);
-    IMU.readGyroscope(gx,gy,gz);
-    // IMU.readGyroscope(gx,gy,gz);
-    // i++;
-    // vx = vx + (x-ix)*9.8;
-    // vy = vy + (y-iy)*9.8;
-    // vz = vz + (z-iz)*9.8;
-    analogWrite(LEDR,255*(1-abs(gx)/2000));
-    analogWrite(LEDG,255*(1-abs(gy)/2000));
-    analogWrite(LEDB,255*(1-abs(gz)/2000));
-    // Serial.print(-1);
-    // Serial.print('\t');
-    // Serial.print(1);
-    // Serial.print('\t');
-    // Serial.print(p);
-    // Serial.print('\t');
-    // Serial.print(q);
-    // Serial.print('\t');
-    // Serial.println(r);
-    // Serial.print('\t');
-    // Serial.print(x/16);
-    // Serial.print('\t');
-    // Serial.print(y/16);
-    // Serial.print('\t');
-    // Serial.println(z/16);
-    
-  }
-  unsigned long endtime = micros(); // take note of end time
-  unsigned long duration = endtime - starttime; // duration of the event in microseconds
-  Serial.print(100000000/float(duration));
+  IMU.readIMU(ax,ay,az,gx,gy,gz);
+  i++;
+  if(i==100) {i=0;
   Serial.print('\t');
   Serial.print(gx);
   Serial.print('\t');
@@ -82,5 +52,5 @@ void loop() {
   Serial.print(ay);
   Serial.print('\t');
   Serial.println(az);
-
+  }
 }
