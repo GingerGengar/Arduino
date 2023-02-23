@@ -5,22 +5,41 @@
 #include "Arduino_LSM9DS1.h"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
-//Various Compilation Options
+//IS THIS VERSION PRODUCTION READY? No means define debug, yes means comment it out
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //Comment next line if we dont want to debug 
 #define DEBUG 1
-//Comment next line if we dont want to print angular velocity
-//#define PRINT_ANGULAR_VEL 1
-//Comment next line if we dont want to see the status of the different sensors
-//#define PRINT_SENSOR_STATUS 1
-//Comment next line if we dont want to see the angular callibration values
-//#define PRINT_ANGULAR_CAL 1
-//Comment next line if we dont want to see the angular velocity integrations
-//#define PRINT_INTEGRATION_OMEGA 1
-//Comment next line if we dont want to see the controller outputs
-//#define PRINT_CONTROLLER_OUTPUT 1
-//Comment next line if we dont want to see the controller reference values
-#define PRINT_CONTROLLER_REFERENCE 1
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+//Specific DEBUG options
+/////////////////////////////////////////////////////////////////////////////////////////////////
+#ifdef DEBUG //This means that these things wont even be defined if DEBUG is turned off
+
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    //These are Input-Output Testing Modes!!! Only ENABLE ONE OR THE OTHER!!!
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    //Define this if we want to test input to the controller
+    #define INPUT_TEST 1
+    //Define this if we want to test output of the controller
+    //#define OUTPUT_TEST 1
+
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    //These are General Printing Options
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    //Comment next line if we dont want to print angular velocity
+    //#define PRINT_ANGULAR_VEL 1
+    //Comment next line if we dont want to see the status of the different sensors
+    //#define PRINT_SENSOR_STATUS 1
+    //Comment next line if we dont want to see the angular callibration values
+    //#define PRINT_ANGULAR_CAL 1
+    //Comment next line if we dont want to see the angular velocity integrations
+    //#define PRINT_INTEGRATION_OMEGA 1
+    //Comment next line if we dont want to see the controller outputs
+    //#define PRINT_CONTROLLER_OUTPUT 1
+    //Comment next line if we dont want to see the controller reference values
+    #define PRINT_CONTROLLER_REFERENCE 1
+
+#endif
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //Program Specific Pre-processor Directives
@@ -33,6 +52,18 @@
 #define beta 0.50
 //Stability factor to "bleed" out the integration
 #define STABILITY_F 0.0002
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+//IMPORTANT Pin Input Output Definitions
+/////////////////////////////////////////////////////////////////////////////////////////////////
+//Here we define the Input Pins given from the RC module
+#define PinInOmegaX 2 //Digital Pin 2 for desired omega x
+#define PinInOmegaY 3 //Digital Pin 3 for desired omega y
+#define PinInOmegaZ 4 //Digital Pin 4 for desired omega z
+//Here we define the Output Pins for the various Servos
+#define PinOutOmegaX 10 //Digital pin 10 for servo output roll
+#define PinOutOmegaY 9  //Digital pin  9 for servo output pitch
+#define PinOutOmegaZ 8  //Digital pin  8 for servo output yaw
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //IMPORTANT TWEAKABLE Controller Values
@@ -121,7 +152,9 @@ float ErrOmegaX, ErrOmegaY, ErrOmegaZ = 0.0;
 //These are the control outputs 
 float OutputOmegaX, OutputOmegaY, OutputOmegaZ = 0.0;
 //These are the variables that are supposed to read the PWM input
-float InputOmegaX, InputOmegaY, InputOmegaZ = 0.0;
+float InputOmegaX = TrimInputX; //If not modified later, assume the input is at trim
+float InputOmegaY = TrimInputY; //If not modified later, assume the input is at trim
+float InputOmegaZ = TrimInputZ; //If not modified later, assume the input is at trim
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //Collection of User Defined Functions
@@ -147,6 +180,15 @@ float Inp2RefRate(unsigned long InputDutyCycle, unsigned long TrimInput,
 unsigned long MaxRange, float MaxOmega) {
     return float((float(InputDutyCycle) - float(TrimInput))/float(MaxRange))*MaxOmega;}
 
+//Reads the duty cycle of a pwm signal at a given input digital pin
+unsigned long PWMDutyCycle(int INPUTPIN) {
+    //Need to typecast all unsigned integer times into floats
+    float highTime = (float) pulseIn(INPUTPIN, HIGH);
+    float lowTime = (float) pulseIn(INPUTPIN, LOW);
+    float cycleTime = highTime + lowTime;
+    //So that we can perform division and multiplication here
+    return (unsigned long) (highTime/cycleTime*100.0);}
+
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //Initial Setup Function, every GLOBAL variable must have proper Initializations!!!
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -171,9 +213,27 @@ void setup() {
   //This is an initialization of "time" used to make microcontroller run at fixed intervals
   microsPrevious = micros();
 
-  //TODO: Configure the pin input here for the pwm's
-  pinMode(2, OUTPUT);  // sets the pin as output
-  //TODO: COnfigure the pin outputs here for the pwm outputs
+  ///////////////////////////////////////////////////////////////////////////////////////////////
+  //Configure the pin input here for the pwm's
+  ///////////////////////////////////////////////////////////////////////////////////////////////
+  pinMode(PinInOmegaX, INPUT);
+  pinMode(PinInOmegaY, INPUT);
+  pinMode(PinInOmegaZ, INPUT);
+  
+  ///////////////////////////////////////////////////////////////////////////////////////////////
+  //Configure the pin outputs here for the pwm outputs
+  ///////////////////////////////////////////////////////////////////////////////////////////////
+  pinMode(PinOutOmegaX, OUTPUT);
+  pinMode(PinOutOmegaY, OUTPUT);
+  pinMode(PinOutOmegaZ, OUTPUT);
+
+  ///////////////////////////////////////////////////////////////////////////////////////////////
+  //This would go away if we are not debugging, this is only used for Input-Output Testing
+  ///////////////////////////////////////////////////////////////////////////////////////////////
+  #ifdef INPUT_TEST 
+    //If we want to test input, then we got to generate pwm signals through these pins
+    pinMode(5, OUTPUT); pinMode(6, OUTPUT); pinMode(7, OUTPUT);
+  #endif
 
   //This LED command is to tell us that we have succesfully completed the setup phase 
   digitalWrite(LED_BUILTIN, HIGH);}
@@ -182,9 +242,15 @@ void setup() {
 //Main control Loop
 /////////////////////////////////////////////////////////////////////////////////////////////////
 void loop() {
-
-  analogWrite(2, 20); // analogRead values go from 0 to 1023, analogWrite values from 0 to 255
-
+  
+  ///////////////////////////////////////////////////////////////////////////////////////////////
+  //Produce PWM signal over if we want to test the input capabilities of our arduino
+  ///////////////////////////////////////////////////////////////////////////////////////////////
+  #ifdef INPUT_TEST
+    //If we wnat to test input, then we got to generate the pwm signals
+    analogWrite(5, 128); analogWrite(6, 128), analogWrite(7, 128);
+  #endif
+  
   //Get the Current Time 
   microsNow = micros();
   
@@ -237,14 +303,28 @@ void loop() {
     //Controller Section
     /////////////////////////////////////////////////////////////////////////////////////////////
     if (Cal_Complete) {//Only perform the Controller Section if callibrated
-        //TODO: read in the pwm signal over here to InputOmegaX
-
+        /////////////////////////////////////////////////////////////////////////////////////////
+        //Reading in the Raw PWM values
+        /////////////////////////////////////////////////////////////////////////////////////////
+        //If we are testing for the output, disable reading inputs
+        #ifndef OUTPUT_TEST 
+            //Read in the pwm signal over here to InputOmegaX
+            InputOmegaX = PWMDutyCycle(PinInOmegaX);
+            //Read in the pwm signal over here to InputOmegaY
+            InputOmegaY = PWMDutyCycle(PinInOmegaY);
+            //Read in the pwm signal over here to InputOmegaZ
+            InputOmegaZ = PWMDutyCycle(PinInOmegaZ);
+        #endif
+        
+        /////////////////////////////////////////////////////////////////////////////////////////
+        //Main Processing Body of the PI controller
+        /////////////////////////////////////////////////////////////////////////////////////////
         //Map the input PWM signal into the reference desired omega-x
-        RefOmegaX = Inp2RefRate(70, TrimInputX, MaxRangeInpX, MaxOmegaXDes);
+        RefOmegaX = Inp2RefRate(InputOmegaX, TrimInputX, MaxRangeInpX, MaxOmegaXDes);
         //Map the input PWM signal into the reference desired omega-y
-        RefOmegaY = Inp2RefRate(70, TrimInputY, MaxRangeInpY, MaxOmegaYDes);
+        RefOmegaY = Inp2RefRate(InputOmegaY, TrimInputY, MaxRangeInpY, MaxOmegaYDes);
         //Map the input PWM signal into the reference desired omega-z
-        RefOmegaZ = Inp2RefRate(70, TrimInputZ, MaxRangeInpZ, MaxOmegaZDes);
+        RefOmegaZ = Inp2RefRate(InputOmegaZ, TrimInputZ, MaxRangeInpZ, MaxOmegaZDes);
         //Get the error for the omega x
         ErrOmegaX = wx - RefOmegaX;
         //Get the error for the omega y
@@ -264,7 +344,18 @@ void loop() {
         //Produce PI output based on omega-z
         OutputOmegaZ = P_OmegaZ*ErrOmegaZ + I_OmegaZ*IntOmegaZ + TrimOutZ;
         
-        //TODO: Write the controller output pwm over here, write analog signal to OutputOmegaX
+        /////////////////////////////////////////////////////////////////////////////////////////
+        //Output Servo values from 0(0% Duty Cycle) to 255(100% Duty Cycle) over here
+        /////////////////////////////////////////////////////////////////////////////////////////
+        //If we are testing for the inputs, disable producing outputs
+        #ifndef INPUT_TEST
+            //Write the PWM signal for omegaX over to its corresponding output pin
+            analogWrite(PinOutOmegaX, OutputOmegaX);
+            //Write the PWM signal for omegaY over to its corresponding output pin
+            analogWrite(PinOutOmegaY, OutputOmegaY);
+            //Write the PWM signal for omegaZ over to its corresponding output pin
+            analogWrite(PinOutOmegaZ, OutputOmegaZ);
+        #endif
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////
@@ -272,7 +363,7 @@ void loop() {
     /////////////////////////////////////////////////////////////////////////////////////////////
     #ifdef DEBUG
     i++; //Increment the integer counter used for printing debug messages
-    if (i == 10){//'\t' means prints a single tab
+    if (i == 3){//'\t' means prints a single tab
       
       #ifdef PRINT_SENSOR_STATUS
       Serial.print("AccelStatus: ");  
@@ -299,28 +390,30 @@ void loop() {
       #endif
 
       #ifdef PRINT_INTEGRATION_OMEGA
+      //Print the values of the error of angular velocity integrated
       Serial.print(IntOmegaX);  Serial.print('\t');
       Serial.print(IntOmegaY);  Serial.print('\t');
       Serial.print(IntOmegaZ);  Serial.print('\t');
       #endif
 
       #ifdef PRINT_CONTROLLER_OUTPUT
+      //Print the values of what the controller output ought to be
       Serial.print(OutputOmegaX);   Serial.print('\t');
       Serial.print(OutputOmegaY);   Serial.print('\t');
       Serial.print(OutputOmegaZ);   Serial.print('\t');
       #endif
 
       #ifdef PRINT_CONTROLLER_REFERENCE
-      Serial.print(Inp2RefRate(70, TrimInputX, MaxRangeInpX, MaxOmegaXDes));  Serial.print('\t');
-      Serial.print(Inp2RefRate(70, TrimInputY, MaxRangeInpY, MaxOmegaYDes));  Serial.print('\t');
-      Serial.print(Inp2RefRate(70, TrimInputZ, MaxRangeInpZ, MaxOmegaZDes));  Serial.print('\t');
+      Serial.print(RefOmegaX);  Serial.print('\t');
+      Serial.print(RefOmegaY);  Serial.print('\t');
+      Serial.print(RefOmegaZ);  Serial.print('\t');
       #endif
       
       Serial.println(' ');
       i = 0;
     }
     #endif
-    
+    //analogWrite(2, 127);
     //After each time our control lop is run, reset the time counter
     microsPrevious = microsNow;
   }
