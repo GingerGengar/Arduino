@@ -3,6 +3,8 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //This is for access to the IMU of the arduino
 #include "Arduino_LSM9DS1.h"
+#include <Servo.h>
+#include <RC_Receiver.h>
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //IS THIS VERSION PRODUCTION READY? No means define debug, yes means comment it out
@@ -19,7 +21,7 @@
     //These are Input-Output Testing Modes!!! Only ENABLE ONE OR THE OTHER!!!
     /////////////////////////////////////////////////////////////////////////////////////////////
     //Define this if we want to test input to the controller
-    #define INPUT_TEST 1
+    //#define INPUT_TEST 1
     //Define this if we want to test output of the controller
     //#define OUTPUT_TEST 1
 
@@ -35,10 +37,13 @@
     //Comment next line if we dont want to see the angular velocity integrations
     //#define PRINT_INTEGRATION_OMEGA 1
     //Comment next line if we dont want to see the controller outputs
-    //#define PRINT_CONTROLLER_OUTPUT 1
+    #define PRINT_CONTROLLER_OUTPUT 1
     //Comment next line if we dont want to see the controller reference values
     #define PRINT_CONTROLLER_REFERENCE 1
-
+    //Comment next line if we dont want to see raw control inputs
+    //#define PRINT_RAW_INPUT 1
+    //Comment next line if we dont want to see mapped control inputs
+    #define PRINT_MAPPED_INPUT 1
 #endif
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -47,11 +52,11 @@
 //How many cycles are we going to take before we begin callibration process
 #define CAL_BEGIN 1000
 //How many cycles are we going to average over in the callibration process
-#define CAL_DURATION 1000
+#define CAL_DURATION 2000
 //Beta paramtere used in low pass filtering 0 < beta < 1
 #define beta 0.50
 //Stability factor to "bleed" out the integration
-#define STABILITY_F 0.0002
+#define STABILITY_F 0.0008
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //IMPORTANT Pin Input Output Definitions
@@ -70,14 +75,14 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //Important Proportional Integral Derivative Gains that is tweaked from experimentations
 //Proportional and Integral Gains for the angular velocity in x
-float P_OmegaX = 0.0;
-float I_OmegaX = 1.0;
+float P_OmegaX = 0.3;
+float I_OmegaX = 0.0;
 //Proportional and Integral Gains for the angular velocity in y
-float P_OmegaY = 0.0;
-float I_OmegaY = 1.0;
+float P_OmegaY = 0.3;
+float I_OmegaY = 0.0;
 //Proportional and Integral Gains for the angular velocity in z
-float P_OmegaZ = 0.0;
-float I_OmegaZ = 1.0;
+float P_OmegaZ = 0.3;
+float I_OmegaZ = 0.0;
 
 //What is the "zero-input" from the remote control device, this is duty cycle PWM
 //Zero-control position for omega-x
@@ -89,27 +94,27 @@ unsigned long TrimInputZ = 50;
 
 //What is the max range of input pwm duty cycle values so TrimInputX + MaxRangeInpX = maximum val
 //Maximum deviation from neutral control for omega-x channel
-unsigned long MaxRangeInpX = 20;
+unsigned long MaxRangeInpX = 50;
 //Maximum deviation from neutral control for omega-y channel
-unsigned long MaxRangeInpY = 20;
+unsigned long MaxRangeInpY = 50;
 //Maximum deviation from neutral control for omega-z channel
-unsigned long MaxRangeInpZ = 20;
+unsigned long MaxRangeInpZ = 50;
 
 //What is the maximum desired angular rates (deg/s)
 //Maximum roll rate we want to achieve
-float MaxOmegaXDes = 15.0;
+float MaxOmegaXDes = 90.0;
 //Maximum pitch rate we want to achieve
-float MaxOmegaYDes = 15.0;
+float MaxOmegaYDes = 90.0;
 //Maximum yaw rate we want to achieve
-float MaxOmegaZDes = 15.0;
+float MaxOmegaZDes = 30.0;
 
 //Trim PWM Output Values 0 means always off, 255 means 100% Duty Cycle
 //Default PWM output at trim control surface for omega-x
-unsigned long TrimOutX = 127; 
+float TrimOutX = 90; 
 //Default PWM output at trim control surface for omega-y
-unsigned long TrimOutY = 127; 
+float TrimOutY = 90; 
 //Default PWM output at trim control surface for omega-z
-unsigned long TrimOutZ = 127;
+float TrimOutZ = 90;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //Deifnition of Global Variables
@@ -155,6 +160,17 @@ float OutputOmegaX, OutputOmegaY, OutputOmegaZ = 0.0;
 float InputOmegaX = TrimInputX; //If not modified later, assume the input is at trim
 float InputOmegaY = TrimInputY; //If not modified later, assume the input is at trim
 float InputOmegaZ = TrimInputZ; //If not modified later, assume the input is at trim
+//Definitions of the servo
+Servo servoOmegaX;
+Servo servoOmegaY;
+Servo servoOmegaZ;
+//This is the rc receiver object
+RC_Receiver receiver(PinInOmegaX, PinInOmegaY, PinInOmegaZ);
+//This is the minimum and maximum of the radio control receiver
+int minMax[3][2] = {//First value is the minimum, second value is the maximum
+    {1031,1851}, //For Omega X
+    {1178,2030}, //For Omega Y
+    {1161,1925}}; //For Omega Z
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //Collection of User Defined Functions
@@ -201,7 +217,7 @@ void setup() {
   digitalWrite(LEDG, HIGH); digitalWrite(LEDB, HIGH);
   //Start the serial commnunication and enter infinite loop if serial communication can't start
   Serial.begin(9600); while (!Serial); Serial.println("Started");
-  
+
   //If the IMU is unresponsive then say so using the serial print
   if (!IMU.begin()) {Serial.println("Failed to initialize IMU!");
     //If the IMU is unresponsive just keep blinking on and off the red LEDS
@@ -216,16 +232,14 @@ void setup() {
   ///////////////////////////////////////////////////////////////////////////////////////////////
   //Configure the pin input here for the pwm's
   ///////////////////////////////////////////////////////////////////////////////////////////////
-  pinMode(PinInOmegaX, INPUT);
-  pinMode(PinInOmegaY, INPUT);
-  pinMode(PinInOmegaZ, INPUT);
+  receiver.setMinMax(minMax);
   
   ///////////////////////////////////////////////////////////////////////////////////////////////
   //Configure the pin outputs here for the pwm outputs
   ///////////////////////////////////////////////////////////////////////////////////////////////
-  pinMode(PinOutOmegaX, OUTPUT);
-  pinMode(PinOutOmegaY, OUTPUT);
-  pinMode(PinOutOmegaZ, OUTPUT);
+  servoOmegaX.attach(PinOutOmegaX);
+  servoOmegaY.attach(PinOutOmegaY);
+  servoOmegaZ.attach(PinOutOmegaZ);
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
   //This would go away if we are not debugging, this is only used for Input-Output Testing
@@ -242,13 +256,12 @@ void setup() {
 //Main control Loop
 /////////////////////////////////////////////////////////////////////////////////////////////////
 void loop() {
-  
   ///////////////////////////////////////////////////////////////////////////////////////////////
   //Produce PWM signal over if we want to test the input capabilities of our arduino
   ///////////////////////////////////////////////////////////////////////////////////////////////
   #ifdef INPUT_TEST
     //If we wnat to test input, then we got to generate the pwm signals
-    analogWrite(5, 128); analogWrite(6, 128), analogWrite(7, 128);
+    analogWrite(5, 128); analogWrite(6, 135), analogWrite(7, 128);
   #endif
   
   //Get the Current Time 
@@ -309,11 +322,11 @@ void loop() {
         //If we are testing for the output, disable reading inputs
         #ifndef OUTPUT_TEST 
             //Read in the pwm signal over here to InputOmegaX
-            InputOmegaX = PWMDutyCycle(PinInOmegaX);
+            InputOmegaX = receiver.getMap(1);
             //Read in the pwm signal over here to InputOmegaY
-            InputOmegaY = PWMDutyCycle(PinInOmegaY);
+            InputOmegaY = receiver.getMap(2);
             //Read in the pwm signal over here to InputOmegaZ
-            InputOmegaZ = PWMDutyCycle(PinInOmegaZ);
+            InputOmegaZ = receiver.getMap(3);
         #endif
         
         /////////////////////////////////////////////////////////////////////////////////////////
@@ -350,11 +363,11 @@ void loop() {
         //If we are testing for the inputs, disable producing outputs
         #ifndef INPUT_TEST
             //Write the PWM signal for omegaX over to its corresponding output pin
-            analogWrite(PinOutOmegaX, OutputOmegaX);
+            servoOmegaX.write(int(OutputOmegaX));
             //Write the PWM signal for omegaY over to its corresponding output pin
-            analogWrite(PinOutOmegaY, OutputOmegaY);
+            servoOmegaY.write(int(OutputOmegaY));
             //Write the PWM signal for omegaZ over to its corresponding output pin
-            analogWrite(PinOutOmegaZ, OutputOmegaZ);
+            servoOmegaZ.write(int(OutputOmegaZ));
         #endif
     }
 
@@ -363,7 +376,7 @@ void loop() {
     /////////////////////////////////////////////////////////////////////////////////////////////
     #ifdef DEBUG
     i++; //Increment the integer counter used for printing debug messages
-    if (i == 3){//'\t' means prints a single tab
+    if (i == 2){//'\t' means prints a single tab
       
       #ifdef PRINT_SENSOR_STATUS
       Serial.print("AccelStatus: ");  
@@ -408,12 +421,24 @@ void loop() {
       Serial.print(RefOmegaY);  Serial.print('\t');
       Serial.print(RefOmegaZ);  Serial.print('\t');
       #endif
+     
+      #ifdef PRINT_RAW_INPUT
+      Serial.print(receiver.getRaw(1)); Serial.print('\t');
+      Serial.print(receiver.getRaw(2)); Serial.print('\t');
+      Serial.print(receiver.getRaw(3)); Serial.print('\t');
+      #endif
+
+      #ifdef PRINT_MAPPED_INPUT
+      Serial.print(receiver.getMap(1)); Serial.print('\t');
+      Serial.print(receiver.getMap(2)); Serial.print('\t');
+      Serial.print(receiver.getMap(3)); Serial.print('\t');
+      #endif
       
       Serial.println(' ');
       i = 0;
     }
     #endif
-    //analogWrite(2, 127);
+    
     //After each time our control lop is run, reset the time counter
     microsPrevious = microsNow;
   }
