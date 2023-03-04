@@ -2,7 +2,7 @@
 //Library Dependencies
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //This is for access to the IMU of the arduino
-#include "Arduino_LSM9DS1.h"
+#include <MPU6050.h>
 #include <Servo.h>
 #include <RC_Receiver.h>
 
@@ -23,7 +23,7 @@
     //Define this if we want to test input to the controller
     //#define INPUT_TEST 1
     //Define this if we want to test output of the controller
-    //#define OUTPUT_TEST 1
+    #define OUTPUT_TEST 1
 
     /////////////////////////////////////////////////////////////////////////////////////////////
     //These are General Printing Options
@@ -44,6 +44,7 @@
     //#define PRINT_RAW_INPUT 1
     //Comment next line if we dont want to see mapped control inputs
     #define PRINT_MAPPED_INPUT 1
+
 #endif
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -196,33 +197,19 @@ float Inp2RefRate(unsigned long InputDutyCycle, unsigned long TrimInput,
 unsigned long MaxRange, float MaxOmega) {
     return float((float(InputDutyCycle) - float(TrimInput))/float(MaxRange))*MaxOmega;}
 
-//Reads the duty cycle of a pwm signal at a given input digital pin
-unsigned long PWMDutyCycle(int INPUTPIN) {
-    //Need to typecast all unsigned integer times into floats
-    float highTime = (float) pulseIn(INPUTPIN, HIGH);
-    float lowTime = (float) pulseIn(INPUTPIN, LOW);
-    float cycleTime = highTime + lowTime;
-    //So that we can perform division and multiplication here
-    return (unsigned long) (highTime/cycleTime*100.0);}
-
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //Initial Setup Function, every GLOBAL variable must have proper Initializations!!!
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 void setup() {
-  //Setup for the various LEDS just to make sure that the setup process was completed succesfully
-  pinMode(LED_BUILTIN, OUTPUT);pinMode(LEDR, OUTPUT); pinMode(LEDG, OUTPUT); pinMode(LEDB, OUTPUT);
-  //This is the initial state of the LED's this is for debugging purposes
-  digitalWrite(LED_BUILTIN, LOW); digitalWrite(LEDR, HIGH); 
-  digitalWrite(LEDG, HIGH); digitalWrite(LEDB, HIGH);
   //Start the serial commnunication and enter infinite loop if serial communication can't start
   Serial.begin(9600); while (!Serial); Serial.println("Started");
 
   //If the IMU is unresponsive then say so using the serial print
-  if (!IMU.begin()) {Serial.println("Failed to initialize IMU!");
+  //if (!IMU.begin()) {Serial.println("Failed to initialize IMU!");
     //If the IMU is unresponsive just keep blinking on and off the red LEDS
-    while (1) {digitalWrite(LEDR, LOW); delay(100); //Blink the red LED on
-      digitalWrite(LEDR, HIGH); delay(100);}} //Blink the red LED off
+    //while (1) {digitalWrite(LEDR, LOW); delay(100); //Blink the red LED on
+      //digitalWrite(LEDR, HIGH); delay(100);}} //Blink the red LED off
   
   //There is 1 million microsec in a second, dividing that by freq gives microsec per reading
   microsPerReading = 1000000/refreshRate;
@@ -249,8 +236,7 @@ void setup() {
     pinMode(5, OUTPUT); pinMode(6, OUTPUT); pinMode(7, OUTPUT);
   #endif
 
-  //This LED command is to tell us that we have succesfully completed the setup phase 
-  digitalWrite(LED_BUILTIN, HIGH);}
+  }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //Main control Loop
@@ -274,6 +260,7 @@ void loop() {
     //Read IMU, Apply Coordinate Transform, Apply Low_Pass_Filters
     /////////////////////////////////////////////////////////////////////////////////////////////
     //Read the IMU for angular velocity only if available
+    /*
     if (IMU.gyroscopeAvailable()) {//Reading the angular velocity
         IMU.readGyroscope(wxRaw, wyRaw, wzRaw);
         //Angular Velocity
@@ -289,7 +276,7 @@ void loop() {
         wz = (1.0-beta)*wz + beta*wzRaw;
        
     }
-    
+    */
     /////////////////////////////////////////////////////////////////////////////////////////////
     //Start of our callibration section, will only trigger once, tho might loop back after 70 mins
     /////////////////////////////////////////////////////////////////////////////////////////////
