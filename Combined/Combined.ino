@@ -2,9 +2,11 @@
 //Library Dependencies
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //This is for access to the IMU of the arduino
-#include <MPU6050.h>
-#include <Servo.h>
-#include <RC_Receiver.h>
+#include <Servo.h> //To control our servos
+#include <RC_Receiver.h> //To receive and interpret PWM duty Cycle
+#include <Adafruit_MPU6050.h> //This is for the MPU 6050
+#include <Adafruit_Sensor.h> //This is a dependency of Adafruit mpu6050
+#include <Wire.h> //This is to begin i2c communication
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //IS THIS VERSION PRODUCTION READY? No means define debug, yes means comment it out
@@ -29,7 +31,7 @@
     //These are General Printing Options
     /////////////////////////////////////////////////////////////////////////////////////////////
     //Comment next line if we dont want to print angular velocity
-    //#define PRINT_ANGULAR_VEL 1
+    #define PRINT_ANGULAR_VEL 1
     //Comment next line if we dont want to see the status of the different sensors
     //#define PRINT_SENSOR_STATUS 1
     //Comment next line if we dont want to see the angular callibration values
@@ -37,13 +39,13 @@
     //Comment next line if we dont want to see the angular velocity integrations
     //#define PRINT_INTEGRATION_OMEGA 1
     //Comment next line if we dont want to see the controller outputs
-    #define PRINT_CONTROLLER_OUTPUT 1
+    //#define PRINT_CONTROLLER_OUTPUT 1
     //Comment next line if we dont want to see the controller reference values
-    #define PRINT_CONTROLLER_REFERENCE 1
+    //#define PRINT_CONTROLLER_REFERENCE 1
     //Comment next line if we dont want to see raw control inputs
     //#define PRINT_RAW_INPUT 1
     //Comment next line if we dont want to see mapped control inputs
-    #define PRINT_MAPPED_INPUT 1
+    //#define PRINT_MAPPED_INPUT 1
 
 #endif
 
@@ -51,25 +53,27 @@
 //Program Specific Pre-processor Directives
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //How many cycles are we going to take before we begin callibration process
-#define CAL_BEGIN 1000
+#define CAL_BEGIN 100
 //How many cycles are we going to average over in the callibration process
-#define CAL_DURATION 2000
+#define CAL_DURATION 100
 //Beta paramtere used in low pass filtering 0 < beta < 1
 #define beta 0.50
 //Stability factor to "bleed" out the integration
-#define STABILITY_F 0.0008
+#define STABILITY_F 0.005
+//Conversion from radians to degree
+#define RAD2DEG 57.29577951308232
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //IMPORTANT Pin Input Output Definitions
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //Here we define the Input Pins given from the RC module
-#define PinInOmegaX 2 //Digital Pin 2 for desired omega x
-#define PinInOmegaY 3 //Digital Pin 3 for desired omega y
-#define PinInOmegaZ 4 //Digital Pin 4 for desired omega z
+#define PinInOmegaX 3 //Digital Pin 2 for desired omega x
+#define PinInOmegaY 4 //Digital Pin 3 for desired omega y
+#define PinInOmegaZ 5 //Digital Pin 4 for desired omega z
 //Here we define the Output Pins for the various Servos
-#define PinOutOmegaX 10 //Digital pin 10 for servo output roll
-#define PinOutOmegaY 9  //Digital pin  9 for servo output pitch
-#define PinOutOmegaZ 8  //Digital pin  8 for servo output yaw
+#define PinOutOmegaX 11 //Digital pin 10 for servo output roll
+#define PinOutOmegaY 10  //Digital pin  9 for servo output pitch
+#define PinOutOmegaZ 9  //Digital pin  8 for servo output yaw
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //IMPORTANT TWEAKABLE Controller Values
@@ -79,8 +83,8 @@
 float P_OmegaX = 0.3;
 float I_OmegaX = 0.0;
 //Proportional and Integral Gains for the angular velocity in y
-float P_OmegaY = 0.3;
-float I_OmegaY = 0.0;
+float P_OmegaY = -0.2;
+float I_OmegaY = -0.2;
 //Proportional and Integral Gains for the angular velocity in z
 float P_OmegaZ = 0.3;
 float I_OmegaZ = 0.0;
@@ -103,11 +107,11 @@ unsigned long MaxRangeInpZ = 50;
 
 //What is the maximum desired angular rates (deg/s)
 //Maximum roll rate we want to achieve
-float MaxOmegaXDes = 90.0;
+float MaxOmegaXDes = 360.0;
 //Maximum pitch rate we want to achieve
-float MaxOmegaYDes = 90.0;
+float MaxOmegaYDes = 360.0;
 //Maximum yaw rate we want to achieve
-float MaxOmegaZDes = 30.0;
+float MaxOmegaZDes = 150.0;
 
 //Trim PWM Output Values 0 means always off, 255 means 100% Duty Cycle
 //Default PWM output at trim control surface for omega-x
@@ -121,9 +125,10 @@ float TrimOutZ = 90;
 //Deifnition of Global Variables
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //At what frequency do we want to run our main control loop (this is slower than our CPU freq)
-unsigned long refreshRate = 400; //333 Hz max for MARG, 500 Hz max for IMU only
+//333 Hz max for MARG, 500 Hz max for IMU only
 //How many microseconds do we have to wait in between reading of the IMU and other sensors
-unsigned long microsPerReading = 0.0;
+//There is 1 million microsec in a second, dividing that by freq gives microsec per reading
+unsigned long microsPerReading = 1000000/400;
 //At what time did we last perform the readings of the IMU and other sensors
 unsigned long microsPrevious = 0.0;
 //What is the time right now
@@ -169,9 +174,12 @@ Servo servoOmegaZ;
 RC_Receiver receiver(PinInOmegaX, PinInOmegaY, PinInOmegaZ);
 //This is the minimum and maximum of the radio control receiver
 int minMax[3][2] = {//First value is the minimum, second value is the maximum
-    {1031,1851}, //For Omega X
-    {1178,2030}, //For Omega Y
-    {1161,1925}}; //For Omega Z
+    {1000,2000}, //For Omega X
+    {1100,2050}, //For Omega Y
+    {1000,1900}}; //For Omega Z
+//This is the mpu 6050 object
+Adafruit_MPU6050 mpu;
+
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //Collection of User Defined Functions
@@ -202,17 +210,61 @@ unsigned long MaxRange, float MaxOmega) {
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 void setup() {
-  //Start the serial commnunication and enter infinite loop if serial communication can't start
-  Serial.begin(9600); while (!Serial); Serial.println("Started");
-
-  //If the IMU is unresponsive then say so using the serial print
-  //if (!IMU.begin()) {Serial.println("Failed to initialize IMU!");
-    //If the IMU is unresponsive just keep blinking on and off the red LEDS
-    //while (1) {digitalWrite(LEDR, LOW); delay(100); //Blink the red LED on
-      //digitalWrite(LEDR, HIGH); delay(100);}} //Blink the red LED off
+  bool MPUSetting = mpu.begin();
   
-  //There is 1 million microsec in a second, dividing that by freq gives microsec per reading
-  microsPerReading = 1000000/refreshRate;
+  
+
+
+
+  //Set the range accelerometer range of the MPU6050  
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  
+  #ifdef DEBUG
+    //Start the serial commnunication and enter infinite loop if serial communication can't start
+    Serial.begin(9600); while (!Serial); Serial.println("Started Communications...");
+    //If the IMU is unresponsive then say so using the serial print
+    if (!MPUSetting) {//Freeze and do nothing if we cannot find the MPU 6050 chip
+      while (true) {delay(10); Serial.println("MPU 6050 Not Found!!!");}} 
+    else {//If indeed we do found the MPU6050 say so and resume as normal
+      Serial.println("MPU6050 Found, continuing");}    
+    //confirm that this range is correct
+    Serial.print("Accelerometer range set to: ");
+    switch (mpu.getAccelerometerRange()) {
+        case MPU6050_RANGE_2_G: Serial.println("+-2G"); break;
+        case MPU6050_RANGE_4_G: Serial.println("+-4G"); break;
+        case MPU6050_RANGE_8_G: Serial.println("+-8G"); break;
+        case MPU6050_RANGE_16_G: Serial.println("+-16G"); break;}
+  #endif 
+  
+  //Set the range of the the gyro on the MPU 6050
+  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  
+  #ifdef DEBUG
+    //Confirm the value that the gyro has been set to
+    Serial.print("Gyro range set to: ");
+    switch (mpu.getGyroRange()) {
+        case MPU6050_RANGE_250_DEG: Serial.println("+- 250 deg/s"); break;
+        case MPU6050_RANGE_500_DEG: Serial.println("+- 500 deg/s"); break;
+        case MPU6050_RANGE_1000_DEG: Serial.println("+- 1000 deg/s"); break;
+        case MPU6050_RANGE_2000_DEG: Serial.println("+- 2000 deg/s"); break;}
+  #endif
+
+  //Set the bandwidth of MPU 6050, we believe that this is sample rate
+  mpu.setFilterBandwidth(MPU6050_BAND_260_HZ);
+  
+  #ifdef DEBUG
+    //Confirm the value of the sample rate of the MPU 6050
+    Serial.print("Filter bandwidth set to: ");
+    switch (mpu.getFilterBandwidth()) {
+        case MPU6050_BAND_260_HZ: Serial.println("260 Hz"); break;
+        case MPU6050_BAND_184_HZ: Serial.println("184 Hz"); break;
+        case MPU6050_BAND_94_HZ: Serial.println("94 Hz"); break;
+        case MPU6050_BAND_44_HZ: Serial.println("44 Hz"); break;
+        case MPU6050_BAND_21_HZ: Serial.println("21 Hz"); break;
+        case MPU6050_BAND_10_HZ: Serial.println("10 Hz"); break;
+        case MPU6050_BAND_5_HZ: Serial.println("5 Hz"); break;}
+  #endif
+
   //This is an initialization of "time" used to make microcontroller run at fixed intervals
   microsPrevious = micros();
 
@@ -242,6 +294,10 @@ void setup() {
 //Main control Loop
 /////////////////////////////////////////////////////////////////////////////////////////////////
 void loop() {
+  /* Get new sensor events with the readings */
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+
   ///////////////////////////////////////////////////////////////////////////////////////////////
   //Produce PWM signal over if we want to test the input capabilities of our arduino
   ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -259,24 +315,23 @@ void loop() {
     /////////////////////////////////////////////////////////////////////////////////////////////
     //Read IMU, Apply Coordinate Transform, Apply Low_Pass_Filters
     /////////////////////////////////////////////////////////////////////////////////////////////
-    //Read the IMU for angular velocity only if available
-    /*
-    if (IMU.gyroscopeAvailable()) {//Reading the angular velocity
-        IMU.readGyroscope(wxRaw, wyRaw, wzRaw);
-        //Angular Velocity
-        wzRaw = wzRaw*-1.0;
-        //Applying Callibration only if Callibration Process is complete
-        if (Cal_Complete) {//Callibration is applied to the Raw measurement Data
-          wxRaw = wxRaw - wxCal; 
-          wyRaw = wyRaw - wyCal; 
-          wzRaw = wzRaw - wzCal;}
-        //Applying Low-Pass Filters
-        wx = (1.0-beta)*wx + beta*wxRaw;
-        wy = (1.0-beta)*wy + beta*wyRaw;
-        wz = (1.0-beta)*wz + beta*wzRaw;
+    //Reading the angular velocity
+    wxRaw = g.gyro.x*RAD2DEG;
+    wyRaw = g.gyro.y*RAD2DEG;
+    wzRaw = g.gyro.z*RAD2DEG;
+    //Applying possible Coordinate Transformation(Ex: wzRaw = wzRaw*-1.0;) 
+    wyRaw = wyRaw*-1.0;
+    wzRaw = wzRaw*-1.0;
+    //Applying Callibration only if Callibration Process is complete
+    if (Cal_Complete) {//Callibration is applied to the Raw measurement Data
+      wxRaw = wxRaw - wxCal; 
+      wyRaw = wyRaw - wyCal; 
+      wzRaw = wzRaw - wzCal;}
+    //Applying Low-Pass Filters
+    wx = (1.0-beta)*wx + beta*wxRaw;
+    wy = (1.0-beta)*wy + beta*wyRaw;
+    wz = (1.0-beta)*wz + beta*wzRaw;
        
-    }
-    */
     /////////////////////////////////////////////////////////////////////////////////////////////
     //Start of our callibration section, will only trigger once, tho might loop back after 70 mins
     /////////////////////////////////////////////////////////////////////////////////////////////
