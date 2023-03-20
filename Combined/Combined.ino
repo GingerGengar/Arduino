@@ -4,8 +4,7 @@
 //This is for access to the IMU of the arduino
 #include <Servo.h> //To control our servos
 #include <ServoInput.h>
-#include <Adafruit_MPU6050.h> //This is for the MPU 6050
-#include <Adafruit_Sensor.h> //This is a dependency of Adafruit mpu6050
+#include <MPU6050_tockn.h>
 #include <Wire.h> //This is to begin i2c communication
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -23,15 +22,15 @@
     //These are Input-Output Testing Modes!!! Only ENABLE ONE OR THE OTHER!!!
     /////////////////////////////////////////////////////////////////////////////////////////////
     //Define this if we want to test input to the controller
-    #define INPUT_TEST 1
+    //#define INPUT_TEST 1
     //Define this if we want to test output of the controller
-    #define OUTPUT_TEST 1
+    //#define OUTPUT_TEST 1
 
     /////////////////////////////////////////////////////////////////////////////////////////////
     //These are General Printing Options
     /////////////////////////////////////////////////////////////////////////////////////////////
     //Comment next line if we dont want to print angular velocity
-    //#define PRINT_ANGULAR_VEL 1
+    #define PRINT_ANGULAR_VEL 1
     //Comment next line if we dont want to see the status of the different sensors
     //#define PRINT_SENSOR_STATUS 1
     //Comment next line if we dont want to see the angular callibration values
@@ -39,13 +38,13 @@
     //Comment next line if we dont want to see the angular velocity integrations
     //#define PRINT_INTEGRATION_OMEGA 1
     //Comment next line if we dont want to see the controller outputs
-    #define PRINT_CONTROLLER_OUTPUT 1
+    //#define PRINT_CONTROLLER_OUTPUT 1
     //Comment next line if we dont want to see the controller reference values
     //#define PRINT_CONTROLLER_REFERENCE 1
     ////Comment next line if we dont want to see raw control inputs
-    #define PRINT_RAW_INPUT 1
+    //#define PRINT_RAW_INPUT 1
     //Comment next line if we dont want to see mapped control inputs
-    #define PRINT_MAPPED_INPUT 1
+    //#define PRINT_MAPPED_INPUT 1
 
 #endif
 
@@ -166,19 +165,20 @@ float OutputOmegaX, OutputOmegaY, OutputOmegaZ = 0.0;
 float InputOmegaX = TrimInputX; //If not modified later, assume the input is at trim
 float InputOmegaY = TrimInputY; //If not modified later, assume the input is at trim
 float InputOmegaZ = TrimInputZ; //If not modified later, assume the input is at trim
+
 //Definitions of the servo
 Servo servoOmegaX;
 Servo servoOmegaY;
 Servo servoOmegaZ;
+
 //This is the mpu 6050 object
-Adafruit_MPU6050 mpu;
+MPU6050 mpu6050(Wire);
 
 //This is the rc receiver object
 ServoInputPin<PinInOmegaX> RcInputX;
 ServoInputPin<PinInOmegaY> RcInputY;
 ServoInputPin<PinInOmegaZ> RcInputZ;
 
-//This is the minimum and maximum of the radio control receiver
 
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -209,56 +209,13 @@ float Inp2RefRate(float InputDutyCycle, float TrimInput, float MaxRange, float M
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 void setup() {
-  bool MPUSetting = mpu.begin();
+  
+  //Start the serial commnunication and enter infinite loop if serial communication can't start
+  Serial.begin(9600); while (!Serial); Serial.println("Started Communications...");
 
-  //Set the range accelerometer range of the MPU6050  
-  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
-  
-  #ifdef DEBUG
-    //Start the serial commnunication and enter infinite loop if serial communication can't start
-    Serial.begin(9600); while (!Serial); Serial.println("Started Communications...");
-    //If the IMU is unresponsive then say so using the serial print
-    if (!MPUSetting) {//Freeze and do nothing if we cannot find the MPU 6050 chip
-      while (true) {delay(10); Serial.println("MPU 6050 Not Found!!!");}} 
-    else {//If indeed we do found the MPU6050 say so and resume as normal
-      Serial.println("MPU6050 Found, continuing");}    
-    //confirm that this range is correct
-    Serial.print("Accelerometer range set to: ");
-    switch (mpu.getAccelerometerRange()) {
-        case MPU6050_RANGE_2_G: Serial.println("+-2G"); break;
-        case MPU6050_RANGE_4_G: Serial.println("+-4G"); break;
-        case MPU6050_RANGE_8_G: Serial.println("+-8G"); break;
-        case MPU6050_RANGE_16_G: Serial.println("+-16G"); break;}
-  #endif 
-  
-  //Set the range of the the gyro on the MPU 6050
-  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-  
-  #ifdef DEBUG
-    //Confirm the value that the gyro has been set to
-    Serial.print("Gyro range set to: ");
-    switch (mpu.getGyroRange()) {
-        case MPU6050_RANGE_250_DEG: Serial.println("+- 250 deg/s"); break;
-        case MPU6050_RANGE_500_DEG: Serial.println("+- 500 deg/s"); break;
-        case MPU6050_RANGE_1000_DEG: Serial.println("+- 1000 deg/s"); break;
-        case MPU6050_RANGE_2000_DEG: Serial.println("+- 2000 deg/s"); break;}
-  #endif
-
-  //Set the bandwidth of MPU 6050, we believe that this is sample rate
-  mpu.setFilterBandwidth(MPU6050_BAND_260_HZ);
-  
-  #ifdef DEBUG
-    //Confirm the value of the sample rate of the MPU 6050
-    Serial.print("Filter bandwidth set to: ");
-    switch (mpu.getFilterBandwidth()) {
-        case MPU6050_BAND_260_HZ: Serial.println("260 Hz"); break;
-        case MPU6050_BAND_184_HZ: Serial.println("184 Hz"); break;
-        case MPU6050_BAND_94_HZ: Serial.println("94 Hz"); break;
-        case MPU6050_BAND_44_HZ: Serial.println("44 Hz"); break;
-        case MPU6050_BAND_21_HZ: Serial.println("21 Hz"); break;
-        case MPU6050_BAND_10_HZ: Serial.println("10 Hz"); break;
-        case MPU6050_BAND_5_HZ: Serial.println("5 Hz"); break;}
-  #endif
+  Wire.begin();
+  mpu6050.begin();
+  //mpu6050.calcGyroOffsets(true);
 
   //This is an initialization of "time" used to make microcontroller run at fixed intervals
   microsPrevious = micros();
@@ -270,6 +227,7 @@ void setup() {
   servoOmegaY.attach(PinOutOmegaY);
   servoOmegaZ.attach(PinOutOmegaZ);
 
+  //This is the minimum and maximum of the radio control receiver
   RcInputX.setRangeMin(1012); RcInputX.setRangeMax(2068);
   RcInputY.setRangeMin(1076); RcInputY.setRangeMax(2072);
   RcInputZ.setRangeMin(1004); RcInputZ.setRangeMax(1996);
@@ -280,11 +238,7 @@ void setup() {
 //Main control Loop
 /////////////////////////////////////////////////////////////////////////////////////////////////
 void loop() {
-  /* Get new sensor events with the readings */
-  sensors_event_t a, g, temp;
-  mpu.getEvent(&a, &g, &temp);
-
-  
+  mpu6050.update(); 
   //Get the Current Time 
   microsNow = micros();
   
@@ -295,9 +249,9 @@ void loop() {
     //Read IMU, Apply Coordinate Transform, Apply Low_Pass_Filters
     /////////////////////////////////////////////////////////////////////////////////////////////
     //Reading the angular velocity
-    wxRaw = g.gyro.x*RAD2DEG;
-    wyRaw = g.gyro.y*RAD2DEG;
-    wzRaw = g.gyro.z*RAD2DEG;
+    wxRaw = mpu6050.getGyroX();
+    wyRaw = mpu6050.getGyroY();
+    wzRaw = mpu6050.getGyroZ();
     //Applying possible Coordinate Transformation(Ex: wzRaw = wzRaw*-1.0;) 
     wyRaw = wyRaw*-1.0;
     wzRaw = wzRaw*-1.0;
