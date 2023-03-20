@@ -3,7 +3,7 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //This is for access to the IMU of the arduino
 #include <Servo.h> //To control our servos
-#include <RC_Receiver.h> //To receive and interpret PWM duty Cycle
+#include <ServoInput.h>
 #include <Adafruit_MPU6050.h> //This is for the MPU 6050
 #include <Adafruit_Sensor.h> //This is a dependency of Adafruit mpu6050
 #include <Wire.h> //This is to begin i2c communication
@@ -23,7 +23,7 @@
     //These are Input-Output Testing Modes!!! Only ENABLE ONE OR THE OTHER!!!
     /////////////////////////////////////////////////////////////////////////////////////////////
     //Define this if we want to test input to the controller
-    //#define INPUT_TEST 1
+    #define INPUT_TEST 1
     //Define this if we want to test output of the controller
     #define OUTPUT_TEST 1
 
@@ -31,7 +31,7 @@
     //These are General Printing Options
     /////////////////////////////////////////////////////////////////////////////////////////////
     //Comment next line if we dont want to print angular velocity
-    #define PRINT_ANGULAR_VEL 1
+    //#define PRINT_ANGULAR_VEL 1
     //Comment next line if we dont want to see the status of the different sensors
     //#define PRINT_SENSOR_STATUS 1
     //Comment next line if we dont want to see the angular callibration values
@@ -39,13 +39,13 @@
     //Comment next line if we dont want to see the angular velocity integrations
     //#define PRINT_INTEGRATION_OMEGA 1
     //Comment next line if we dont want to see the controller outputs
-    //#define PRINT_CONTROLLER_OUTPUT 1
+    #define PRINT_CONTROLLER_OUTPUT 1
     //Comment next line if we dont want to see the controller reference values
     //#define PRINT_CONTROLLER_REFERENCE 1
-    //Comment next line if we dont want to see raw control inputs
-    //#define PRINT_RAW_INPUT 1
+    ////Comment next line if we dont want to see raw control inputs
+    #define PRINT_RAW_INPUT 1
     //Comment next line if we dont want to see mapped control inputs
-    //#define PRINT_MAPPED_INPUT 1
+    #define PRINT_MAPPED_INPUT 1
 
 #endif
 
@@ -91,19 +91,19 @@ float I_OmegaZ = 0.0;
 
 //What is the "zero-input" from the remote control device, this is duty cycle PWM
 //Zero-control position for omega-x
-unsigned long TrimInputX = 50;
+float TrimInputX = 0.42;
 //Zero-control position for omega-y
-unsigned long TrimInputY = 50;
+float TrimInputY = 0.50;
 //Zero-control position for omega-z
-unsigned long TrimInputZ = 50;
+float TrimInputZ = 0.57;
 
 //What is the max range of input pwm duty cycle values so TrimInputX + MaxRangeInpX = maximum val
 //Maximum deviation from neutral control for omega-x channel
-unsigned long MaxRangeInpX = 50;
+float MaxRangeInpX = 0.50;
 //Maximum deviation from neutral control for omega-y channel
-unsigned long MaxRangeInpY = 50;
+float MaxRangeInpY = 0.50;
 //Maximum deviation from neutral control for omega-z channel
-unsigned long MaxRangeInpZ = 50;
+float MaxRangeInpZ = 0.50;
 
 //What is the maximum desired angular rates (deg/s)
 //Maximum roll rate we want to achieve
@@ -170,15 +170,15 @@ float InputOmegaZ = TrimInputZ; //If not modified later, assume the input is at 
 Servo servoOmegaX;
 Servo servoOmegaY;
 Servo servoOmegaZ;
-//This is the rc receiver object
-RC_Receiver receiver(PinInOmegaX, PinInOmegaY, PinInOmegaZ);
-//This is the minimum and maximum of the radio control receiver
-int minMax[3][2] = {//First value is the minimum, second value is the maximum
-    {1000,2000}, //For Omega X
-    {1100,2050}, //For Omega Y
-    {1000,1900}}; //For Omega Z
 //This is the mpu 6050 object
 Adafruit_MPU6050 mpu;
+
+//This is the rc receiver object
+ServoInputPin<PinInOmegaX> RcInputX;
+ServoInputPin<PinInOmegaY> RcInputY;
+ServoInputPin<PinInOmegaZ> RcInputZ;
+
+//This is the minimum and maximum of the radio control receiver
 
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -201,8 +201,7 @@ void Ord4Int(float* IntResult, float* Placeholders, float CurrOmega) {
     Placeholders[0] = CurrOmega;}
 
 /*Input to Reference Angular Rates*/
-float Inp2RefRate(unsigned long InputDutyCycle, unsigned long TrimInput, 
-unsigned long MaxRange, float MaxOmega) {
+float Inp2RefRate(float InputDutyCycle, float TrimInput, float MaxRange, float MaxOmega) {
     return float((float(InputDutyCycle) - float(TrimInput))/float(MaxRange))*MaxOmega;}
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -211,10 +210,6 @@ unsigned long MaxRange, float MaxOmega) {
 
 void setup() {
   bool MPUSetting = mpu.begin();
-  
-  
-
-
 
   //Set the range accelerometer range of the MPU6050  
   mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
@@ -269,24 +264,15 @@ void setup() {
   microsPrevious = micros();
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
-  //Configure the pin input here for the pwm's
-  ///////////////////////////////////////////////////////////////////////////////////////////////
-  receiver.setMinMax(minMax);
-  
-  ///////////////////////////////////////////////////////////////////////////////////////////////
   //Configure the pin outputs here for the pwm outputs
   ///////////////////////////////////////////////////////////////////////////////////////////////
   servoOmegaX.attach(PinOutOmegaX);
   servoOmegaY.attach(PinOutOmegaY);
   servoOmegaZ.attach(PinOutOmegaZ);
 
-  ///////////////////////////////////////////////////////////////////////////////////////////////
-  //This would go away if we are not debugging, this is only used for Input-Output Testing
-  ///////////////////////////////////////////////////////////////////////////////////////////////
-  #ifdef INPUT_TEST 
-    //If we want to test input, then we got to generate pwm signals through these pins
-    pinMode(5, OUTPUT); pinMode(6, OUTPUT); pinMode(7, OUTPUT);
-  #endif
+  RcInputX.setRangeMin(1012); RcInputX.setRangeMax(2068);
+  RcInputY.setRangeMin(1076); RcInputY.setRangeMax(2072);
+  RcInputZ.setRangeMin(1004); RcInputZ.setRangeMax(1996);
 
   }
 
@@ -298,13 +284,6 @@ void loop() {
   sensors_event_t a, g, temp;
   mpu.getEvent(&a, &g, &temp);
 
-  ///////////////////////////////////////////////////////////////////////////////////////////////
-  //Produce PWM signal over if we want to test the input capabilities of our arduino
-  ///////////////////////////////////////////////////////////////////////////////////////////////
-  #ifdef INPUT_TEST
-    //If we wnat to test input, then we got to generate the pwm signals
-    analogWrite(5, 128); analogWrite(6, 135), analogWrite(7, 128);
-  #endif
   
   //Get the Current Time 
   microsNow = micros();
@@ -335,8 +314,9 @@ void loop() {
     /////////////////////////////////////////////////////////////////////////////////////////////
     //Start of our callibration section, will only trigger once, tho might loop back after 70 mins
     /////////////////////////////////////////////////////////////////////////////////////////////
-    j++; if(j >= CAL_BEGIN){
-      k++; //Only increment the calibration duration counter once calibration has already begun
+    if (j< CAL_BEGIN+2) {j++;} if(j >= CAL_BEGIN){
+      //Only increment the calibration duration counter once calibration has already begun
+      if (k<CAL_DURATION+2) {k++;}
       //Only print these messages if DEBUG mode is turned on
       #ifdef DEBUG
       if (j==CAL_BEGIN){Serial.println("Callibration Process Started!!!");}
@@ -364,11 +344,11 @@ void loop() {
         //If we are testing for the output, disable reading inputs
         #ifndef OUTPUT_TEST 
             //Read in the pwm signal over here to InputOmegaX
-            InputOmegaX = receiver.getMap(1);
+            if(RcInputX.available()) {InputOmegaX = RcInputX.getPercent();}
             //Read in the pwm signal over here to InputOmegaY
-            InputOmegaY = receiver.getMap(2);
+            if (RcInputY.available()) {InputOmegaY = RcInputY.getPercent();}
             //Read in the pwm signal over here to InputOmegaZ
-            InputOmegaZ = receiver.getMap(3);
+            if (RcInputZ.available()) {InputOmegaZ = RcInputZ.getPercent();}
         #endif
         
         /////////////////////////////////////////////////////////////////////////////////////////
@@ -418,7 +398,7 @@ void loop() {
     /////////////////////////////////////////////////////////////////////////////////////////////
     #ifdef DEBUG
     i++; //Increment the integer counter used for printing debug messages
-    if (i == 2){//'\t' means prints a single tab
+    if (i == 1){//'\t' means prints a single tab
       
       #ifdef PRINT_SENSOR_STATUS
       Serial.print("AccelStatus: ");  
@@ -441,7 +421,6 @@ void loop() {
       Serial.print(wxCal);  Serial.print('\t');
       Serial.print(wyCal);  Serial.print('\t');
       Serial.print(wzCal);  Serial.print('\t');
-      Serial.print(k);      Serial.print('\t');
       #endif
 
       #ifdef PRINT_INTEGRATION_OMEGA
@@ -465,15 +444,15 @@ void loop() {
       #endif
      
       #ifdef PRINT_RAW_INPUT
-      Serial.print(receiver.getRaw(1)); Serial.print('\t');
-      Serial.print(receiver.getRaw(2)); Serial.print('\t');
-      Serial.print(receiver.getRaw(3)); Serial.print('\t');
+      Serial.print(RcInputX.getPulseRaw()); Serial.print('\t');
+      Serial.print(RcInputY.getPulseRaw()); Serial.print('\t');
+      Serial.print(RcInputZ.getPulseRaw()); Serial.print('\t');
       #endif
 
       #ifdef PRINT_MAPPED_INPUT
-      Serial.print(receiver.getMap(1)); Serial.print('\t');
-      Serial.print(receiver.getMap(2)); Serial.print('\t');
-      Serial.print(receiver.getMap(3)); Serial.print('\t');
+      Serial.print(InputOmegaX); Serial.print('\t');
+      Serial.print(InputOmegaY); Serial.print('\t');
+      Serial.print(InputOmegaZ); Serial.print('\t');
       #endif
       
       Serial.println(' ');
