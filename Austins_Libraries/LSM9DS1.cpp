@@ -74,9 +74,10 @@ int LSM9DS1Class::begin()
   writeRegister(LSM9DS1_ADDRESS, LSM9DS1_CTRL_REG6_XL, 0xd8); // 952 Hz, 8g, 408Hz BW
   //writeRegister(LSM9DS1_ADDRESS, LSM9DS1_CTRL_REG10, 0x0d); //self-check accel+gyro
 
-  //writeRegister(LSM9DS1_ADDRESS_M, LSM9DS1_CTRL_REG1_M, 0xFE); // Temperature compensation enable, ultra-high performance, 80 Hz
-  //writeRegister(LSM9DS1_ADDRESS_M, LSM9DS1_CTRL_REG2_M, 0x00); // 4 gauss
-  //writeRegister(LSM9DS1_ADDRESS_M, LSM9DS1_CTRL_REG3_M, 0x00); // Continuous conversion mode
+  // Temperature compensation enable, ultra-high performance, 80 Hz
+  writeRegister(LSM9DS1_ADDRESS_M, LSM9DS1_CTRL_REG1_M, 0xFE); 
+  writeRegister(LSM9DS1_ADDRESS_M, LSM9DS1_CTRL_REG2_M, 0x00); // 4 gauss
+  writeRegister(LSM9DS1_ADDRESS_M, LSM9DS1_CTRL_REG3_M, 0x00); // Continuous conversion mode
 
   return 1;
 }
